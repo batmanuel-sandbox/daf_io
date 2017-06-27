@@ -24,14 +24,6 @@ from contextlib import contextmanager
 MAX_ARRAY_SIZE = 65535
 
 
-def is_dict_like(obj):
-    return hasattr(obj, '__getitem__') and hasattr(obj, 'keys')
-
-
-def is_list_like(obj):
-    return hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes))
-
-
 class DatabaseError(IOError):
     pass
 
@@ -155,7 +147,7 @@ def read_sql_query(sql, con, column_dtypes=None, coerce_float=True,
     read_sql
 
     """
-    sql_io = sql_io_builder(con)
+    sql_io = _sql_io_builder(con)
     return sql_io.read_sql(
         sql, params=params, column_dtypes=column_dtypes,
         coerce_float=coerce_float, parse_dates=parse_dates, chunksize=chunksize)
@@ -217,10 +209,10 @@ def read_sql(sql, con, column_dtypes=None, coerce_float=True, params=None,
     read_sql_query : Read SQL query into a afw table
 
     """
-    sql_io = sql_io_builder(con)
+    sql_io = _sql_io_builder(con)
 
     try:
-        _is_table_name = sql_io.has_table(sql)
+        _is_table_name = sql_io.table_exists(sql)
     except SQLAlchemyError:
         _is_table_name = False
 
@@ -268,12 +260,12 @@ def to_sql(catalog, name, con, schema=None, if_exists='fail',
     if if_exists not in ('fail', 'replace', 'append'):
         raise ValueError("'{0}' is not valid for if_exists".format(if_exists))
 
-    sql_io = sql_io_builder(con, schema=schema)
+    sql_io = _sql_io_builder(con, schema=schema)
     sql_io.to_sql(catalog, name, if_exists=if_exists, schema=schema,
                   chunksize=chunksize, dtype=dtype)
 
 
-def has_table(table_name, con, schema=None):
+def table_exists(table_name, con, schema=None):
     """
     Check if the Database has named table.
 
@@ -292,30 +284,32 @@ def has_table(table_name, con, schema=None):
     -------
     boolean
     """
-    sql_io = sql_io_builder(con, schema=schema)
-    return sql_io.has_table(table_name)
-
-
-table_exists = has_table
-
-
-def sql_io_builder(con, schema=None, meta=None):
-    """
-    Convenience function to return a SQLIO object
-    """
-    con = _engine_builder(con)
-    return SQLDatabase(con, schema=schema, meta=meta)
+    sql_io = _sql_io_builder(con, schema=schema)
+    return sql_io.table_exists(table_name)
 
 
 # -----------------------------------------------------------------------------
 # -- Helper functions
+
+def _is_dict_like(obj):
+    return hasattr(obj, '__getitem__') and hasattr(obj, 'keys')
+
+
+def _is_list_like(obj):
+    return hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes))
+
+
+def _sql_io_builder(con, schema=None, meta=None):
+    """Convenience function to return a SQLIO object"""
+    con = _engine_builder(con)
+    return SQLDatabase(con, schema=schema, meta=meta)
 
 
 def _convert_params(sql, params):
     """convert sql and params args"""
     args = [sql]
     if params is not None:
-        if is_dict_like(params):
+        if _is_dict_like(params):
             args += [params]
         else:
             args += [list(params)]
@@ -372,6 +366,8 @@ class SQLTable(object):
     do better type conversions.
     Also holds various flags needed to avoid having to
     pass them between functions all the time.
+
+    Users are NOT adviced to use this directly.
     """
 
     def __init__(self, name, sql_io_engine, catalog=None, if_exists='fail',
@@ -395,7 +391,7 @@ class SQLTable(object):
             raise ValueError("Could not init table '%s'" % name)
 
     def exists(self):
-        return self.sql_io.has_table(self.name, self.schema)
+        return self.sql_io.table_exists(self.name, self.schema)
 
     def sql_schema(self):
         return str(CreateTable(self.sql_table).compile(self.sql_io.connectable))
@@ -826,7 +822,7 @@ class SQLDatabase(object):
             single value can be used.
 
         """
-        if dtype and not is_dict_like(dtype):
+        if dtype and not _is_dict_like(dtype):
             dtype = {col_name: dtype for col_name in catalog}
 
         if dtype is not None:
@@ -860,7 +856,7 @@ class SQLDatabase(object):
     def tables(self):
         return self.meta.tables
 
-    def has_table(self, name, schema=None):
+    def table_exists(self, name, schema=None):
         return self.connectable.run_callable(
             self.connectable.dialect.has_table,
             name,
@@ -883,7 +879,7 @@ class SQLDatabase(object):
 
     def drop_table(self, table_name, schema=None):
         schema = schema or self.meta.schema
-        if self.has_table(table_name, schema):
+        if self.table_exists(table_name, schema):
             self.meta.reflect(only=[table_name], schema=schema)
             self.get_table(table_name, schema).drop()
             self.meta.clear()
@@ -914,5 +910,5 @@ def get_schema(catalog, name, keys=None, con=None, dtype=None):
 
     """
 
-    sql_io = sql_io_builder(con=con)
+    sql_io = _sql_io_builder(con=con)
     return sql_io._create_sql_schema(catalog, name, keys=keys, dtype=dtype)
