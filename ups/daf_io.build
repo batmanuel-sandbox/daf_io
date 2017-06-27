@@ -1,0 +1,3 @@
+@LSST BUILD@ &&
+build_lsst @PRODUCT@ @VERSION@ @REPOVERSION@
+
